@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+# This must be a by-id device path or any other with partitions distuingished by -part1, -part2, etc.
+drivepath=/dev/disk/by-id/<ID>

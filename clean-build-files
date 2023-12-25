@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+echo Cleans Fedora Live Toolkit Build Files 
+
+if [ "$EUID" -ne 0 ]; then
+  echo "Must be run as root."
+  exit 1
+fi
+
+echo Removing disk image files...
+rm -rf lmc-results
+
+echo Removing ISO image files...
+rm -rf lmc-iso-results
+
+echo Removing boot result files...
+rm -rf boot-results
+
+echo Removing log files...
+rm -f program.log
+rm -f livemedia.log
+rm -f virt-install.log
+
+echo Scrubbing mock...
+mock -r fedora-38-x86_64 --scrub all
+echo; echo
+
+echo Cleaning done.
+exit 0

@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+
+echo Flashes Fedora Live Toolkit; echo; echo
+
+if [ "$EUID" -ne 0 ]; then
+  echo "Must be run as root."
+  exit 1
+fi
+
+if [[ ! -f "flash-config"]]; then
+  echo "Must create flash-config file."
+  exit 1
+fi
+
+source ./flash-config
+
+if [[ ! -d "boot-results" || ! -d "lmc-iso-results" || ! -d "lmc-results" ]]; then
+  echo "Must run build-files first."
+  exit 1
+fi
+
+lastlba=$(($(blockdev --getsz $drivepath) - 34))
+echo "Using drive at $drivepath."
+echo This will wipe all existing partitions from this disk!
+read -p "Do you want to proceed? [y/n] " yn
+case "$yn" in
+  [yY]) 
+    ;;
+  *)
+    exit
+    ;;
+esac
+echo; echo
+
+echo Unmounting any mounted partitions...
+umount ${drivepath}*
+echo; echo
+
+echo Wiping old filesystems and partition tables...
+wipefs -a $drivepath-part*
+sgdisk -Z $drivepath
+echo; echo
+
+echo Creating new partitions...
+sgdisk $drivepath -U 4d717122-d209-4306-8785-b1469a5362ba
+sgdisk $drivepath -n 1:2048:616447
+sgdisk $drivepath -t 1:EF00
+sgdisk $drivepath -c 1:"EFI System Partition"
+sgdisk $drivepath -u 1:b04805e3-54b1-4575-b958-4f1895c1a256
+sgdisk $drivepath -n 2:616448:618495
+sgdisk $drivepath -t 2:EF02
+sgdisk $drivepath -u 2:b3cd8c57-995c-43d3-949d-aead4e5b56e4
+sgdisk $drivepath -n 3:618496:5861375
+sgdisk $drivepath -u 3:5d330580-a058-47ce-bff1-8140d824689d
+sgdisk $drivepath -n 4:5861376:$lastlba
+sgdisk $drivepath -u 4:16f10834-6578-4fc4-af4d-2cfac6f9b75b
+echo; echo
+
+echo Copying and updating MBR
+dd if=lmc-results/Fedora-Live-Toolkit-38-x86_64.img of=$drivepath bs=512 count=1 status=progress
+(echo x; echo n; echo w; echo y) | gdisk $drivepath
+partprobe $drivepath
+sleep 10
+echo; echo
+
+echo Creating partition 1 EFI filesystem...
+mkfs.vfat $drivepath-part1
+echo; echo
+
+echo Copying partition 2 GRUB files...
+loopdev=$(losetup -P --show -f lmc-results/Fedora-Live-Toolkit-38-x86_64.img)
+dd if=${loopdev}p2 of=$drivepath-part2 status=progress bs=512
+losetup -d $loopdev
+echo; echo
+
+echo Creating partition 3 ext4 filesystem...
+mkfs.ext4 -U "c05a1da1-d909-42cd-b062-fcffad3817aa" -L "Fedora Toolkit" $drivepath-part3
+echo; echo
+
+echo Creating partition 4 exfat filesystem...
+mkfs.exfat -L "Flash Drive" $drivepath-part4
+echo; echo
+
+echo Copying partition 1 files...
+mkdir p1mnt
+mount $drivepath-part1 p1mnt
+cp -r boot-results/efi/* p1mnt/.
+cp grub-efi.cfg p1mnt/EFI/fedora/grub.cfg
+umount p1mnt
+rmdir p1mnt
+echo; echo
+
+echo Copying partition 3 files...
+mkdir p3mnt
+mount $drivepath-part3 p3mnt
+cp -r lmc-iso-results/LiveOS p3mnt/.
+mkdir p3mnt/boot
+cp -r boot-results/grub2 p3mnt/boot/.
+cp lmc-iso-results/images/pxeboot/initrd.img p3mnt/boot/.
+cp lmc-iso-results/images/pxeboot/vmlinuz p3mnt/boot/.
+cp grub.cfg p3mnt/boot/grub2/.
+rm p3mnt/boot/grub2/grubenv
+umount p3mnt
+rmdir p3mnt
+echo; echo
+
+echo Copying partition 4 files...
+mkdir p4mnt
+mount $drivepath-part4 p4mnt
+cp Read\ If\ Found.txt p4mnt/.
+umount p4mnt
+rmdir p4mnt
+echo; echo
+
+echo All done.
+exit 0

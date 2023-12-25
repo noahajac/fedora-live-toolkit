@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+
+echo Builds Fedora Live Toolkit; echo; echo
+
+if [ "$EUID" -ne 0 ]; then
+  echo "Must be run as root."
+  exit 1
+fi
+
+echo Cleaning from any old environment...
+./clean-build-files
+echo; echo
+
+echo Setting up build environment...
+setenforce 0
+mock -r fedora-38-x86_64 --init
+mock -r fedora-38-x86_64 --install lorax vim-minimal pykickstart
+git clone https://pagure.io/fedora-kickstarts.git -b f38 /var/lib/mock/fedora-38-x86_64/root/builddir/fedora-kickstarts
+cp fedora-live-toolkit.ks /var/lib/mock/fedora-38-x86_64/root/builddir/fedora-kickstarts/custom/.
+echo; echo
+
+echo Creating boot image...
+mock -r fedora-38-x86_64 --shell --enable-network -- lorax -p Fedora -v 38 -r 38 -s https://dl.fedoraproject.org/pub/fedora/linux/releases/38/Everything/x86_64/os/ -s https://dl.fedoraproject.org/pub/fedora/linux/updates/38/Everything/x86_64/ -i grub2-pc-modules -i exfatprogs ./lorax-results/
+echo; echo
+
+echo Creating flattened kickstart file...
+mock -r fedora-38-x86_64 --shell --enable-network -- ksflatten -c fedora-kickstarts/custom/fedora-live-toolkit.ks -o fedora-kickstarts/custom/flat-fedora-live-toolkit.ks --version F38
+sed -i 's/part \/ --size=7750//' /var/lib/mock/fedora-38-x86_64/root/builddir/fedora-kickstarts/custom/flat-fedora-live-toolkit.ks
+sed -i 's/part \/ --fstype="ext4" --size=5120//' /var/lib/mock/fedora-38-x86_64/root/builddir/fedora-kickstarts/custom/flat-fedora-live-toolkit.ks
+echo; echo
+
+echo Creating disk image...
+livemedia-creator --ks /var/lib/mock/fedora-38-x86_64/root/builddir/fedora-kickstarts/custom/flat-fedora-live-toolkit.ks --iso /var/lib/mock/fedora-38-x86_64/root/builddir/lorax-results/images/boot.iso --virt-uefi --make-disk --resultdir lmc-results --image-name Fedora-Live-Toolkit-38-x86_64.img --project Fedora-Live-Toolkit --volid Fedora-Live-Toolkit --releasever 38
+echo; echo
+
+echo Copying and removing files boot files from disk image...
+mkdir p1mnt
+mkdir p3mnt
+loopdev=$(losetup -P --show -f lmc-results/Fedora-Live-Toolkit-38-x86_64.img)
+mount ${loopdev}p1 p1mnt
+mount ${loopdev}p3 p3mnt
+mkdir boot-results
+cp -r p3mnt/boot/* boot-results
+cp -r p1mnt/* boot-results/efi
+mkdir boot-files
+mv p3mnt/boot/initramfs*.img boot-files/.
+mv p3mnt/boot/vmlinuz* boot-files/.
+find ./boot-results/. -type f -name '*rescue*' -delete
+find ./boot-files/. -type f -name '*rescue*' -delete
+rm -rf p3mnt/boot/*
+rm -rf p3mnt/boot/.vmlinuz*
+mv boot-files/* p3mnt/boot/.
+rm -rf boot-files
+mkdir p3mnt/boot/efi
+rm -rf p1mnt/*
+umount p1mnt
+umount p3mnt
+rmdir p1mnt
+rmdir p3mnt
+losetup -d $loopdev
+echo; echo
+
+echo Creating ISO image...
+livemedia-creator --disk-image lmc-results/Fedora-Live-Toolkit-38-x86_64.img --keep-image --make-iso --resultdir lmc-iso-results --nomacboot --iso-name Fedora-Live-Toolkit-38-x86_64.iso --project Fedora-Live-Toolkit --volid Fedora-Live-Toolkit --releasever 38 --ks /var/lib/mock/fedora-38-x86_64/root/builddir/fedora-kickstarts/custom/flat-fedora-live-toolkit.ks --lorax-templates=lorax-templates
+echo; echo
+
+echo Cleaning up environment...
+mock -r fedora-38-x86_64 --scrub all
+setenforce 1
+rm program.log
+rm livemedia.log
+rm virt-install.log
+echo; echo
+
+echo All done.
+exit 0
+
